@@ -1,0 +1,413 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>File ID & URL Lookup</title>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500&display=swap" rel="stylesheet"/>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  :root {
+    --bg: #0a0a0f; --surface: #12121a; --border: #1e1e2e;
+    --accent: #00e5a0; --accent2: #0077ff; --warn: #ff6b35;
+    --text: #e8e8f0; --muted: #5a5a7a; --card: #161622;
+  }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: 'IBM Plex Sans', sans-serif;
+    min-height: 100vh; display: flex; flex-direction: column;
+    align-items: center; padding: 40px 20px;
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(0,119,255,0.12) 0%, transparent 60%),
+      radial-gradient(ellipse 60% 40% at 80% 80%, rgba(0,229,160,0.06) 0%, transparent 50%);
+  }
+  header { width: 100%; max-width: 900px; margin-bottom: 40px; padding-bottom: 24px; border-bottom: 1px solid var(--border); }
+  .logo { font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 500; letter-spacing: 0.2em; color: var(--accent); text-transform: uppercase; margin-bottom: 12px; }
+  h1 { font-size: 28px; font-weight: 300; letter-spacing: -0.02em; line-height: 1.2; }
+  h1 span { color: var(--accent); font-weight: 500; }
+  .subtitle { margin-top: 8px; color: var(--muted); font-size: 12px; font-family: 'IBM Plex Mono', monospace; }
+  .main { width: 100%; max-width: 900px; }
+
+  #loadingScreen { width: 100%; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 36px; }
+  .loading-title { font-family: 'IBM Plex Mono', monospace; font-size: 12px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--accent); margin-bottom: 20px; }
+  .progress-bar-wrap { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; overflow: hidden; height: 8px; margin-bottom: 16px; }
+  .progress-bar { height: 100%; background: var(--accent); width: 0%; transition: width 0.3s ease; border-radius: 6px; }
+  .progress-text { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--muted); margin-bottom: 16px; }
+  .file-list { max-height: 260px; overflow-y: auto; }
+  .file-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; border-bottom: 1px solid var(--border); font-family: 'IBM Plex Mono', monospace; font-size: 11px; }
+  .file-row:last-child { border-bottom: none; }
+  .dot { width: 10px; height: 10px; border-radius: 50%; flex-shrink: 0; }
+  .dot.pending { background: var(--border); }
+  .dot.loading { background: var(--accent2); animation: pulse 0.8s infinite; }
+  .dot.done { background: var(--accent); }
+  .dot.error { background: var(--warn); }
+  @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+  .file-name { color: var(--text); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-count { color: var(--muted); font-size: 10px; white-space: nowrap; }
+  .error-box { background: rgba(255,107,53,0.08); border: 1px solid rgba(255,107,53,0.3); border-radius: 8px; padding: 14px; margin-top: 16px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--warn); line-height: 1.7; }
+
+  #searchUI { display: none; }
+  .search-block { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 28px; margin-bottom: 24px; }
+  label { display: block; font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); margin-bottom: 10px; }
+  .input-group { margin-bottom: 20px; }
+  .input-row { display: flex; gap: 12px; }
+  input[type="text"] { flex: 1; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 13px; padding: 12px 16px; outline: none; transition: border-color 0.2s, box-shadow 0.2s; }
+  input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0,229,160,0.1); }
+  input[type="text"]::placeholder { color: var(--muted); }
+  button { background: var(--accent); color: #000; border: none; border-radius: 8px; font-family: 'IBM Plex Mono', monospace; font-size: 12px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; padding: 12px 24px; cursor: pointer; transition: opacity 0.15s, transform 0.1s; white-space: nowrap; }
+  button:hover { opacity: 0.85; } button:active { transform: scale(0.97); }
+  .stats { font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--muted); margin-top: 14px; display: flex; gap: 20px; flex-wrap: wrap; }
+  .stats span { color: var(--accent); }
+  .filter-row { margin-top: 16px; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .filter-label { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  select { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; color: var(--text); font-family: 'IBM Plex Mono', monospace; font-size: 11px; padding: 6px 10px; outline: none; cursor: pointer; max-width: 320px; }
+  select:focus { border-color: var(--accent); }
+
+  .results-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 14px; }
+  .results-label { font-family: 'IBM Plex Mono', monospace; font-size: 11px; letter-spacing: 0.15em; text-transform: uppercase; color: var(--muted); }
+  .badge { background: rgba(0,229,160,0.12); color: var(--accent); font-family: 'IBM Plex Mono', monospace; font-size: 11px; font-weight: 600; padding: 3px 10px; border-radius: 20px; border: 1px solid rgba(0,229,160,0.25); }
+  .new-id-banner { background: rgba(0,229,160,0.12); border: 1px solid rgba(0,229,160,0.3); border-radius: 8px; padding: 16px; margin-bottom: 20px; }
+  .new-id-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--muted); margin-bottom: 8px; }
+  .new-id-value { font-family: 'IBM Plex Mono', monospace; font-size: 13px; color: var(--accent); font-weight: 600; margin-bottom: 10px; word-break: break-all; }
+  .result-card { background: var(--card); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; margin-bottom: 12px; position: relative; transition: border-color 0.2s; animation: slideIn 0.2s ease both; border-left: 3px solid var(--accent); }
+  @keyframes slideIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: translateY(0); } }
+  .result-card:hover { border-color: var(--accent2); }
+  .result-filename { font-size: 14px; font-weight: 500; color: var(--text); margin-bottom: 14px; padding-right: 160px; line-height: 1.4; }
+  .result-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  .result-field { display: flex; flex-direction: column; gap: 4px; }
+  .result-field-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
+  .result-field-value { font-family: 'IBM Plex Mono', monospace; font-size: 12px; color: var(--text); word-break: break-all; line-height: 1.5; }
+  .result-field-value.highlight { color: var(--accent); font-weight: 500; }
+  .source-tag { position: absolute; top: 16px; right: 16px; font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--muted); background: var(--bg); padding: 3px 8px; border-radius: 4px; border: 1px solid var(--border); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .copy-btn { background: transparent; border: 1px solid var(--border); color: var(--muted); font-size: 10px; padding: 4px 10px; border-radius: 4px; cursor: pointer; margin-top: 6px; font-family: 'IBM Plex Mono', monospace; letter-spacing: 0.05em; transition: all 0.15s; }
+  .copy-btn:hover { border-color: var(--accent); color: var(--accent); }
+  .copy-btn.copied { border-color: var(--accent); color: var(--accent); }
+  .empty-state { text-align: center; padding: 60px 20px; color: var(--muted); }
+  .empty-state .icon { font-size: 40px; margin-bottom: 16px; opacity: 0.4; }
+  .empty-state p { font-family: 'IBM Plex Mono', monospace; font-size: 13px; line-height: 1.6; }
+  .file-type-chip { display: inline-block; font-family: 'IBM Plex Mono', monospace; font-size: 9px; padding: 2px 7px; border-radius: 3px; background: rgba(0,119,255,0.12); color: var(--accent2); border: 1px solid rgba(0,119,255,0.2); margin-top: 4px; }
+  
+  .url-section { background: rgba(0,119,255,0.08); border: 1px solid rgba(0,119,255,0.2); border-radius: 8px; padding: 16px; margin-top: 16px; }
+  .url-label { font-family: 'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; display: block; }
+  .url-display { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 12px; font-family: 'IBM Plex Mono', monospace; font-size: 11px; color: var(--text); word-break: break-all; line-height: 1.6; position: relative; margin-bottom: 8px; }
+  .url-display.old { opacity: 0.7; }
+  .url-display.new { border-color: var(--accent); background: rgba(0,229,160,0.05); }
+  .url-arrows { text-align: center; color: var(--accent); font-size: 14px; margin: 8px 0; font-weight: 500; }
+</style>
+</head>
+<body>
+<header>
+  <div class="logo">&#x25C6; File Migration Tool</div>
+  <h1>Old ID &rarr; <span>New ID</span> + URL Lookup</h1>
+  <p class="subtitle" id="headerSubtitle">Loading files from Azure Blob Storage…</p>
+</header>
+
+<div class="main">
+  <div id="loadingScreen">
+    <div class="loading-title">&#x25B6; Fetching &amp; indexing files…</div>
+    <div class="progress-bar-wrap"><div class="progress-bar" id="progressBar"></div></div>
+    <div class="progress-text" id="progressText">Starting…</div>
+    <div class="file-list" id="fileList"></div>
+    <div id="errorBox"></div>
+  </div>
+
+  <div id="searchUI">
+    <div class="search-block">
+      <div class="input-group">
+        <label>Enter Old File ID</label>
+        <div class="input-row">
+          <input type="text" id="searchInput" placeholder="Paste old_file_id here…" autocomplete="off" spellcheck="false"/>
+          <button onclick="doSearch()">Search</button>
+        </div>
+        <p style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--muted); margin-top: 8px;">🔍 Searches all files • 🔗 Finds ANY URL with ID • 🔄 Auto-generates new URLs</p>
+      </div>
+
+      <div class="stats">
+        <div>Records: <span id="statTotal">—</span></div>
+        <div>With new ID: <span id="statDest">—</span></div>
+        <div>Files loaded: <span id="statFiles">—</span></div>
+      </div>
+      <div class="filter-row">
+        <span class="filter-label">Filter by file:</span>
+        <select id="fileFilter"><option value="">All files</option></select>
+      </div>
+    </div>
+    <div id="results"></div>
+  </div>
+</div>
+
+<script>
+const BASE = 'https://stmother.blob.core.windows.net/mother-new';
+
+const FILES = [
+  "ALTA_Report.xlsx",
+  "Anthropic_Report.xlsx",
+  "Back Market_Report.xlsx",
+  "Coinbase_Report.xlsx",
+  "Figs_Report.xlsx",
+  "IKEA_Report.xlsx",
+  "KFC_Report.xlsx",
+  "M&S_Report.xlsx",
+  "META_Report.xlsx",
+  "NATIONWIDE_Report.xlsx",
+  "Netflix_Report.xlsx",
+  "OLAPLEX_Report.xlsx",
+  "Pirateship_Report.xlsx",
+  "Reese's_Report.xlsx",
+  "Uber Eats_Report.xlsx",
+  "UBER_Report.xlsx",
+  "Weetabix_Report.xlsx",
+  "Zalando_Report.xlsx",
+  "unknown_Report.xlsx"
+];
+
+function label(path) { return path.split('/').pop().replace('.xlsx',''); }
+
+const INDEX = {};
+let totalRecords = 0, totalWithDest = 0, loadedFiles = 0;
+const errors = [];
+
+function getFileTypeLabel(mime) {
+  const map = {
+    'application/vnd.google-apps.spreadsheet':'Spreadsheet',
+    'application/vnd.google-apps.presentation':'Presentation',
+    'application/vnd.google-apps.document':'Document',
+    'application/vnd.google-apps.folder':'Folder',
+    'application/pdf':'PDF'
+  };
+  return map[mime] || (mime ? mime.split('/').pop() : '');
+}
+
+function copyText(text, btn) {
+  navigator.clipboard.writeText(text).then(() => {
+    btn.textContent = '✓ Copied'; btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+  });
+}
+
+function initFileList() {
+  document.getElementById('fileList').innerHTML = FILES.map((f, i) => `
+    <div class="file-row">
+      <div class="dot pending" id="dot-${i}"></div>
+      <div class="file-name">${f}</div>
+      <div class="file-count" id="ct-${i}">—</div>
+    </div>`).join('');
+}
+
+function setStatus(i, state, lbl) {
+  const d = document.getElementById(`dot-${i}`);
+  const c = document.getElementById(`ct-${i}`);
+  if (d) d.className = `dot ${state}`;
+  if (c && lbl !== undefined) c.textContent = lbl;
+}
+
+function updateProgress(done, total, current) {
+  document.getElementById('progressBar').style.width = Math.round((done/total)*100) + '%';
+  document.getElementById('progressText').textContent =
+    `${done} / ${total} files${current !== null ? ` — ${current.split('/').pop()}` : ''}`;
+}
+
+async function fetchAndIndex(path, i) {
+  setStatus(i, 'loading');
+  const encodedPath = path.split('/').map(s => encodeURIComponent(s)).join('/');
+  const url = `${BASE}/${encodedPath}`;
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} — ${url}`);
+  const buf = await resp.arrayBuffer();
+  const wb = XLSX.read(buf, { type: 'array' });
+  const ws = wb.Sheets[wb.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+  let count = 0;
+  
+  for (const row of rows) {
+    const key = String(row['old_file_id'] || '').trim();
+    if (!key) continue;
+    
+    const dest = String(row['destination_object_internalId'] || '').trim();
+    
+    let foundUrl = '';
+    let urlColumnName = '';
+    
+    const urlColumns = ['old_link', 'old_url', 'url', 'link', 'file_url', 'old_file_url', 'file_link', 'document_url', 'file_path'];
+    
+    for (const colName of urlColumns) {
+      const cellValue = String(row[colName] || '').trim();
+      if (cellValue && cellValue.includes(key)) {
+        foundUrl = cellValue;
+        urlColumnName = colName;
+        break;
+      }
+    }
+    
+    if (!foundUrl) {
+      for (const [colName, cellValue] of Object.entries(row)) {
+        const strValue = String(cellValue || '').trim();
+        if ((strValue.includes('http') || strValue.includes('drive.google') || strValue.includes('docs.google')) && strValue.includes(key)) {
+          foundUrl = strValue;
+          urlColumnName = colName;
+          break;
+        }
+      }
+    }
+    
+    if (!INDEX[key]) INDEX[key] = [];
+    INDEX[key].push([dest, String(row['file_name']||'').trim(), String(row['file_type']||'').trim(), String(row['status']||'').trim(), path, foundUrl, urlColumnName]);
+    totalRecords++;
+    if (dest) totalWithDest++;
+    count++;
+  }
+  return count;
+}
+
+async function loadAll() {
+  initFileList();
+  for (let i = 0; i < FILES.length; i++) {
+    const f = FILES[i];
+    updateProgress(i, FILES.length, f);
+    try {
+      const count = await fetchAndIndex(f, i);
+      setStatus(i, 'done', `${count.toLocaleString()} rows`);
+      loadedFiles++;
+    } catch(e) {
+      setStatus(i, 'error', 'failed');
+      errors.push(e.message);
+    }
+  }
+  updateProgress(FILES.length, FILES.length, null);
+  document.getElementById('progressText').textContent =
+    `✓ Done — ${loadedFiles} / ${FILES.length} files loaded · ${totalRecords.toLocaleString()} records indexed`;
+
+  if (errors.length) {
+    document.getElementById('errorBox').innerHTML =
+      `<div class="error-box">⚠ ${errors.length} file(s) failed:<br>${errors.slice(0,5).join('<br>')}${errors.length > 5 ? `<br>…and ${errors.length-5} more` : ''}</div>`;
+  }
+
+  const sel = document.getElementById('fileFilter');
+  FILES.forEach(f => {
+    const o = document.createElement('option');
+    o.value = f; o.textContent = label(f);
+    sel.appendChild(o);
+  });
+
+  document.getElementById('statTotal').textContent = totalRecords.toLocaleString();
+  document.getElementById('statDest').textContent = totalWithDest.toLocaleString();
+  document.getElementById('statFiles').textContent = loadedFiles;
+  document.getElementById('headerSubtitle').textContent =
+    `${loadedFiles} files · ${totalRecords.toLocaleString()} records · live from Azure Blob`;
+
+  setTimeout(() => {
+    document.getElementById('loadingScreen').style.display = 'none';
+    document.getElementById('searchUI').style.display = 'block';
+  }, 600);
+}
+
+function generateNewUrl(oldUrl, oldFileId, newFileId) {
+  return oldUrl.replace(new RegExp(oldFileId, 'g'), newFileId);
+}
+
+function doSearch() {
+  const query = document.getElementById('searchInput').value.trim();
+  const fileFilter = document.getElementById('fileFilter').value;
+  const container = document.getElementById('results');
+  if (!query) { container.innerHTML = ''; return; }
+
+  let matches = (INDEX[query] || []).map(r => ({
+    destination_object_internalId: r[0], file_name: r[1],
+    file_type: r[2], status: r[3], source_file: r[4], old_file_url: r[5], url_column: r[6]
+  }));
+  if (fileFilter) matches = matches.filter(m => m.source_file === fileFilter);
+
+  if (!matches.length) {
+    container.innerHTML = `<div class="empty-state"><div class="icon">⊘</div><p>No records found with file ID across all ${loadedFiles} files.${fileFilter ? '<br/>Try removing the file filter.' : ''}</p></div>`;
+    return;
+  }
+
+  // Find the NEW ID from any match that has it
+  const newIdFound = matches.find(m => m.destination_object_internalId)?.destination_object_internalId || null;
+  
+  // Sort: with URL first, then without
+  const withUrl = matches.filter(m => m.old_file_url);
+  const withoutUrl = matches.filter(m => !m.old_file_url);
+  const sortedMatches = [...withUrl, ...withoutUrl];
+
+  let html = `
+    <div class="results-header">
+      <span class="results-label">Results found across all files</span>
+      <span class="badge">${sortedMatches.length} match${sortedMatches.length !== 1 ? 'es' : ''}</span>
+    </div>`;
+
+  // Show NEW ID banner if found
+  if (newIdFound) {
+    html += `
+    <div class="new-id-banner">
+      <div class="new-id-label">✓ New ID Found & Applied to All URLs Below</div>
+      <div class="new-id-value">${newIdFound}</div>
+      <button class="copy-btn" onclick="copyText('${newIdFound}', this)" style="background: var(--accent); color: #000; margin-top: 0;">Copy New ID</button>
+    </div>`;
+  }
+
+  html += sortedMatches.map((m, i) => {
+    // Use the found NEW ID for ALL URLs
+    const newUrl = (m.old_file_url && newIdFound) 
+      ? generateNewUrl(m.old_file_url, query, newIdFound)
+      : null;
+    
+    return `
+    <div class="result-card" style="animation-delay:${i*0.04}s">
+      <div class="source-tag" title="${m.source_file}">📄 ${label(m.source_file)}</div>
+      <div class="result-filename">${m.file_name || '—'}</div>
+      ${m.old_file_url ? `<div style="font-family: 'IBM Plex Mono', monospace; font-size: 10px; color: var(--accent2); margin-bottom: 12px; padding: 6px; background: rgba(0,119,255,0.1); border-radius: 4px;">📂 Found in: <strong>${label(m.source_file)}</strong> | Column: <strong>${m.url_column}</strong></div>` : ''}
+      <div class="result-grid">
+        <div class="result-field">
+          <div class="result-field-label">Old File ID</div>
+          <div class="result-field-value">${query}</div>
+        </div>
+        <div class="result-field">
+          <div class="result-field-label">New ID Applied</div>
+          <div class="result-field-value highlight">${newIdFound || 'Not found'}</div>
+          ${newIdFound ? `<button class="copy-btn" onclick="copyText('${newIdFound}', this)">Copy</button>` : ''}
+        </div>
+        <div class="result-field">
+          <div class="result-field-label">File Type</div>
+          <div class="result-field-value"><span class="file-type-chip">${getFileTypeLabel(m.file_type)}</span></div>
+        </div>
+        <div class="result-field">
+          <div class="result-field-label">Status</div>
+          <div class="result-field-value">${m.status || '—'}</div>
+        </div>
+      </div>
+      ${m.old_file_url && newIdFound ? `
+      <div class="url-section">
+        <span class="url-label">🔗 Original URL</span>
+        <div class="url-display old" title="${m.old_file_url}">${m.old_file_url}</div>
+        <div class="url-arrows">↓ ID Replaced ↓</div>
+        <span class="url-label">✓ New URL</span>
+        <div class="url-display new" title="${newUrl}">${newUrl}</div>
+        <button class="copy-btn" onclick="copyText('${newUrl}', this)">Copy New URL</button>
+      </div>
+      ` : m.old_file_url && !newIdFound ? `
+      <div class="url-section">
+        <span class="url-label">🔗 URL Found</span>
+        <div class="url-display old" title="${m.old_file_url}">${m.old_file_url}</div>
+        <div style="color: var(--warn); font-family: 'IBM Plex Mono', monospace; font-size: 11px; margin-top: 12px;">⚠ New ID not found in any file</div>
+      </div>
+      ` : !m.old_file_url && newIdFound ? `
+      <div style="color: var(--muted); font-family: 'IBM Plex Mono', monospace; font-size: 11px; margin-top: 12px;">ℹ No URL containing this file ID in this file</div>
+      ` : ''}
+    </div>`;
+  }).join('');
+
+  container.innerHTML = html;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('searchInput').addEventListener('keydown', e => {
+    if (e.key === 'Enter') doSearch();
+  });
+  document.getElementById('fileFilter').addEventListener('change', doSearch);
+  loadAll();
+});
+</script>
+</body>
+</html>
